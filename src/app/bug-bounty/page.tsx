@@ -24,7 +24,7 @@ const OUT_OF_SCOPE = [
 ];
 
 const RULES = [
-  "One payout per unique issue: the first complete report of it gets the $100. Duplicates of a known or already-reported issue don't qualify.",
+  "One payout per unique issue: the first complete report of it gets the $100. Duplicates of a known or already-reported issue, including anything fixed in Round 1, don't qualify.",
   "We decide whether a report is a major bug, based on real impact on users' funds, accounts or privacy.",
   "Test only with your own account and small amounts. Never access, change or move anyone else's data or funds.",
   "Keep it private until we've shipped a fix. We'll tell you when it's live.",
@@ -40,7 +40,7 @@ export default function BugBountyPage() {
           <header className="border-b border-line pb-10">
             <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white/80 px-3.5 py-1.5 font-mono text-[11.5px] uppercase tracking-[0.14em] text-foreground/75">
               <i className="size-2 rounded-full bg-ember shadow-[0_0_0_4px_rgba(232,65,37,0.15)]" />
-              Round 01 · Open
+              Round 02 · Open
             </span>
             <h1 className="mt-5 text-[38px] font-semibold leading-[1.05] tracking-tight sm:text-[48px]">
               Bug bounty<span className="text-ember">.</span>
@@ -50,12 +50,12 @@ export default function BugBountyPage() {
               <a href="https://github.com/PriviAgents/privi" target="_blank" rel="noreferrer" className="text-foreground underline decoration-black/20 underline-offset-4 hover:decoration-black">
                 its code is open
               </a>
-              . Find a major security bug and we&apos;ll pay you <strong className="font-semibold text-foreground">$100 in USDC</strong>. This is the first round; more are coming.
+              . Find a major security bug and we&apos;ll pay you <strong className="font-semibold text-foreground">$100 in USDC</strong>. Round 1 closed with five bugs fixed and shipped within a day. Round 2 is open now.
             </p>
             <dl className="mt-8 grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-3">
               <Stat label="Reward" value="$100" hint="per major bug" accent />
               <Stat label="Paid in" value="USDC" hint="on Solana" />
-              <Stat label="Round" value="01" hint="more coming" />
+              <Stat label="Round" value="02" hint="Round 1: 5 bugs fixed" />
             </dl>
           </header>
 

@@ -15,7 +15,7 @@ We'll acknowledge your report as quickly as we can and keep you updated until th
 
 ## Bug bounty
 
-A major security bug pays **$100 in USDC** (Round 01; more rounds are coming). One payout per unique issue: the first complete report gets it, and we decide whether an issue is major based on its real impact on users' funds, accounts or privacy. Payouts are sent once the fix ships. Full rules: [priviagents.com/bug-bounty](https://priviagents.com/bug-bounty).
+A major security bug pays **$100 in USDC** (Round 02 is open; Round 1 closed with five bugs fixed). One payout per unique issue: the first complete report gets it, and we decide whether an issue is major based on its real impact on users' funds, accounts or privacy. Payouts are sent once the fix ships. Full rules: [priviagents.com/bug-bounty](https://priviagents.com/bug-bounty).
 
 ## In scope
 
