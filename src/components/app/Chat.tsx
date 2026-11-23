@@ -230,7 +230,7 @@ export const Chat = forwardRef<ChatHandle>(function Chat(_props, ref) {
   }
 
   return (
-    <GlassCard className="relative flex h-full max-h-[calc(100dvh-5.5rem)] min-h-[70dvh] flex-col overflow-hidden">
+    <GlassCard className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden lg:max-h-[calc(100dvh-5.5rem)] lg:min-h-[70dvh]">
       <div ref={scrollRef} onScroll={onScroll} className="scroll-thin flex-1 overflow-y-auto px-4 pb-6 pt-6 sm:px-8">
         {items.length === 0 ? (
           <Empty onPick={(s) => void send(s)} disabled={!agentReady} />
@@ -272,7 +272,7 @@ export const Chat = forwardRef<ChatHandle>(function Chat(_props, ref) {
             placeholder={agentReady ? "What do you need?" : "The agent is offline"}
             disabled={!agentReady}
             aria-label="Message"
-            className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent py-2.5 text-[15px] leading-[1.45] outline-none focus-visible:outline-none placeholder:text-subtle disabled:opacity-50"
+            className="max-h-40 min-h-[40px] flex-1 resize-none bg-transparent py-2.5 text-[16px] leading-[1.45] sm:text-[15px] outline-none focus-visible:outline-none placeholder:text-subtle disabled:opacity-50"
             onInput={(e) => {
               const el = e.currentTarget;
               el.style.height = "auto";

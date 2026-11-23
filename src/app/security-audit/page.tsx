@@ -85,6 +85,13 @@ export default function SecurityAuditPage() {
                 <Braces size={15} /> JSON
               </a>
             </div>
+            <p className="mt-6 text-[13.5px] text-muted">
+              Found something we missed?{" "}
+              <a href="/bug-bounty" className="text-foreground underline decoration-black/20 underline-offset-4 hover:decoration-black">
+                Report it privately
+              </a>{" "}
+              and earn $100 in USDC for a major bug.
+            </p>
           </header>
 
           {/* Resolutions */}

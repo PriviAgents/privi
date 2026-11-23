@@ -219,10 +219,63 @@ export function AdminDashboard() {
                 </div>
               </GlassCard>
             </div>
+
+            <SecurityReports token={token} />
           </>
         )}
       </main>
     </div>
+  );
+}
+
+type Report = { id: string; at: string; title: string; severity: string; area: string; description: string; steps: string; contact: string; payout?: string; ipHash: string };
+
+/** Reports from priviagents.com/bug-bounty, newest first. */
+function SecurityReports({ token }: { token: string }) {
+  const [reports, setReports] = useState<Report[] | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    const load = async () => {
+      const r = await fetch("/api/admin/reports", { headers: { authorization: `Bearer ${token}` }, cache: "no-store" }).catch(() => null);
+      if (live && r?.ok) setReports(((await r.json()) as { reports: Report[] }).reports);
+    };
+    void load();
+    const iv = setInterval(() => void load(), 60_000);
+    return () => {
+      live = false;
+      clearInterval(iv);
+    };
+  }, [token]);
+  return (
+    <GlassCard className="p-5">
+      <div className="flex items-center justify-between">
+        <Kicker>Security reports</Kicker>
+        <span className="text-[12px] text-subtle">{reports ? `${reports.length} received` : "Loading"}</span>
+      </div>
+      {reports?.length === 0 && <p className="mt-3 text-[13px] text-muted">No reports yet.</p>}
+      <ul className="mt-3 divide-y divide-line">
+        {reports?.map((r) => (
+          <li key={r.id} className="py-2.5 text-[13px]">
+            <button type="button" onClick={() => setOpen(open === r.id ? null : r.id)} className="flex w-full cursor-pointer items-center gap-2 text-left">
+              <span className={`rounded-md px-1.5 py-0.5 font-mono text-[10.5px] uppercase ${r.severity === "critical" || r.severity === "high" ? "bg-ember text-white" : "bg-black/[0.06]"}`}>{r.severity}</span>
+              <span className="min-w-0 flex-1 truncate font-medium">{r.title}</span>
+              <span className="shrink-0 text-[12px] text-subtle">{timeAgo(r.at)}</span>
+            </button>
+            {open === r.id && (
+              <div className="mt-2 space-y-2 pl-1 text-[12.5px]">
+                <p className="text-subtle">
+                  {r.area} · from <span className="text-foreground">{r.contact}</span> · {r.id} · ip {r.ipHash}
+                  {r.payout ? <> · payout <span className="break-all font-mono">{r.payout}</span></> : null}
+                </p>
+                <pre className="whitespace-pre-wrap break-words font-sans leading-relaxed text-foreground/85">{r.description}</pre>
+                {r.steps && <pre className="whitespace-pre-wrap break-words rounded-xl bg-black/[0.04] p-3 font-mono text-[11.5px] leading-relaxed">{r.steps}</pre>}
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+    </GlassCard>
   );
 }
 

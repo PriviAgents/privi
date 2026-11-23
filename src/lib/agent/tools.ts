@@ -3,7 +3,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { Order, SessionState } from "@/lib/privi/types";
 import { balanceOf, chooseFunding, totalUsd } from "@/lib/privi/wallet";
-import { liveMode, newId } from "@/lib/privi/store";
+import { liveMode, newId, saveSession } from "@/lib/privi/store";
 import * as bitrefill from "@/lib/privi/bitrefill";
 import * as zinc from "@/lib/privi/zinc";
 import * as brij from "@/lib/privi/brij";
@@ -11,7 +11,7 @@ import { PaymentNotTaken } from "@/lib/privi/x402pay";
 import { credit } from "@/lib/privi/wallet";
 import { pushActivity } from "@/lib/privi/store";
 import { applyPrices } from "@/lib/privi/prices";
-import { explorerTx, payFromRing, ringsConfigured, type RingAsset } from "@/lib/privi/rings";
+import { explorerTx, payFromRing, RingPaymentUncertain, ringsConfigured, signatureOutcome, type RingAsset } from "@/lib/privi/rings";
 import {
   cancelOrder,
   confirmOrder,
@@ -33,15 +33,38 @@ import {
 export type Approval = { text: string; startedAt: number };
 type Ctx = { session: SessionState; offers: Map<string, Offer>; approval?: Approval };
 
-const AFFIRM =
-  /^(yes|yep|yeah|yup|y|ok|okay|sure|approved?|confirm(ed)?|book( it)?|buy( it)?|order( it)?|do it|go( ahead| for it)?|proceed|place (the |my )?order|pay( for it)?|sounds good|let'?s (do it|go)|perfect|great)\b/i;
-const NEGATE = /\b(no|nope|don'?t|do not|not|cancel|wait|stop|hold)\b/i;
+// An approval message may contain only these words (plus an order id). Anything
+// else ("ok, find something cheaper", "great, now search hotels") is not one.
+const APPROVE_KEY = new Set([
+  "yes", "yep", "yeah", "yea", "yup", "y", "ya", "ok", "okay", "k", "kk", "sure", "approve", "approved",
+  "confirm", "confirmed", "book", "buy", "order", "place", "pay", "purchase", "proceed", "go", "perfect",
+  "great", "good", "alright", "absolutely", "definitely", "fine", "do",
+]);
+const APPROVE_FILLER = new Set([
+  "it", "this", "that", "one", "the", "my", "for", "please", "pls", "thanks", "thank", "you", "now",
+  "all", "right", "and", "looks", "sounds", "ahead", "lets", "let's", "let", "us", "just",
+]);
+
+/** True when `text` is nothing but an approval ("yes", "book it", "Approve order ord_…"). */
+export function isPlainApproval(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 120 || t.includes("?")) return false;
+  const words = t
+    .toLowerCase()
+    .replace(/\bord_[a-f0-9]{12}\b/g, " ")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[^a-z' ]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return words.length > 0 && words.some((w) => APPROVE_KEY.has(w)) && words.every((w) => APPROVE_KEY.has(w) || APPROVE_FILLER.has(w));
+}
 
 /**
  * A payment needs a human "yes" the model can't fake: the order must have been
  * shown in an earlier turn, and the user's own message this turn must approve
- * it (the Approve button sends "Approve order <id>", or a short typed yes).
- * Text inside web pages or tool results can't satisfy this.
+ * it and nothing else. The Approve button sends "Approve order <id>"; a typed
+ * "yes" only covers the newest order awaiting approval. Text inside web pages
+ * or tool results can't satisfy this.
  */
 function approvalProblem(ctx: Ctx, order: Order): string | null {
   const a = ctx.approval;
@@ -50,10 +73,15 @@ function approvalProblem(ctx: Ctx, order: Order): string | null {
     return "The user hasn't seen this order yet. Show the summary (item, price, paid with) and wait for them to approve it.";
   }
   const t = a.text.trim();
-  const named = t.match(/\bord_[a-f0-9]{12}\b/gi);
-  if (named) return named.some((n) => n.toLowerCase() === order.id) && !NEGATE.test(t) ? null : "The user's message doesn't approve this order. Ask them to approve it.";
-  if (t.length <= 80 && !t.includes("?") && AFFIRM.test(t) && !NEGATE.test(t)) return null;
-  return "The user's latest message isn't an approval. Show the summary and ask them to approve this order.";
+  if (!isPlainApproval(t)) return "The user's latest message isn't an approval. Show the summary and ask them to approve this order.";
+  const named = (t.match(/\bord_[a-f0-9]{12}\b/gi) ?? []).map((n) => n.toLowerCase());
+  if (named.length) return named.length === 1 && named[0] === order.id ? null : "The user's message doesn't approve this order. Ask them to approve it.";
+  // A bare "yes" approves only what the user was just shown: the newest order awaiting approval.
+  const newest = ctx.session.orders
+    .filter((o) => o.status === "awaiting_confirmation" && new Date(o.createdAt).getTime() < a.startedAt)
+    .sort((x, y) => new Date(y.createdAt).getTime() - new Date(x.createdAt).getTime())[0];
+  if (newest?.id !== order.id) return "Several orders are awaiting approval. Ask the user to approve this one by tapping its Approve button.";
+  return null;
 }
 
 interface ToolDef<S extends z.ZodType> {
@@ -558,11 +586,51 @@ export const TOOLS = [
           if (balanceOf(session, pending.payAsset).amount + 1e-9 < pending.payAmount) {
             return { error: `Insufficient ${pending.payAsset}. Ask the user to deposit from the Funds card, then approve again.` };
           }
-          const { signature } = await payFromRing({ to: payTo.address, asset: payTo.asset, amount: payTo.amount });
-          pending.details = { ...pending.details, paymentSignature: signature, paymentUrl: explorerTx(signature) };
+          // Write-ahead: debit and save before any money moves, and save the
+          // signature before it's sent, so a retry, an expired lock or a killed
+          // function can never pay twice from one balance.
+          const topActivity = session.activity[0]?.id;
+          const order = confirmOrder(session, order_id, confirmation_token);
+          order.details = { ...order.details, paymentStatus: "pending", paymentAt: new Date().toISOString() };
+          // Undo the debit while nothing has been signed: the order goes back to awaiting approval.
+          const undo = () => {
+            credit(session, order.payAsset, order.payAmount);
+            if (session.activity[0] && session.activity[0].id !== topActivity) session.activity.shift();
+            order.status = "awaiting_confirmation";
+            order.confirmationToken = confirmation_token;
+            const { paymentStatus: _s, paymentAt: _a, ...rest } = order.details;
+            void _s;
+            void _a;
+            order.details = rest;
+          };
+          try {
+            await saveSession(session);
+          } catch (e) {
+            undo();
+            return { error: `Couldn't start the payment: ${(e as Error).message} Nothing was charged.` };
+          }
+          try {
+            const { signature } = await payFromRing({ to: payTo.address, asset: payTo.asset, amount: payTo.amount }, async (sig) => {
+              order.details = { ...order.details, paymentSignature: sig, paymentUrl: explorerTx(sig) };
+              await saveSession(session);
+            });
+            order.details = { ...order.details, paymentSignature: signature, paymentUrl: explorerTx(signature), paymentStatus: "sent" };
+          } catch (e) {
+            if (!(e instanceof RingPaymentUncertain) && !order.details.paymentSignature) {
+              // Failed before a transaction existed: undo the debit, keep the order approvable.
+              undo();
+              return { error: `The payment didn't go through: ${(e as Error).message} Nothing was charged.` };
+            }
+            // Submitted but unconfirmed: keep the debit; check_order settles it from the signature.
+            const sig = e instanceof RingPaymentUncertain ? e.signature : (order.details.paymentSignature as string);
+            order.details = { ...order.details, paymentSignature: sig, paymentUrl: explorerTx(sig), paymentStatus: "unconfirmed" };
+            return { ok: true, order, note: "Payment submitted; Solana hasn't confirmed it yet. Tell the user it's confirming and to check the order shortly." };
+          }
+          if (order.details.bitrefill) await awaitDelivery(session, order, 40_000);
+          return { ok: true, order, balances: session.wallet.balances };
         }
         const order = confirmOrder(session, order_id, confirmation_token);
-        if (order.details.bitrefill) await awaitDelivery(order, 40_000);
+        if (order.details.bitrefill) await awaitDelivery(session, order, 40_000);
         return { ok: true, order, balances: session.wallet.balances };
       } catch (e) {
         return { error: (e as Error).message };
@@ -596,7 +664,7 @@ export const TOOLS = [
       }
       if (!order.details.bitrefill) return { order };
       try {
-        await awaitDelivery(order, 15_000);
+        await awaitDelivery(session, order, 15_000);
         return { order };
       } catch (e) {
         return { error: (e as Error).message, order };
@@ -685,10 +753,37 @@ async function settleZinc(session: SessionState, order: Order, budgetMs: number)
   }
 }
 
-/** Poll Bitrefill until the gift card is delivered (or the budget runs out). */
-async function awaitDelivery(order: Order, budgetMs: number): Promise<void> {
+/** Give a paid gift-card order's full charge (incl. Privi's fee) back, exactly once. */
+function refundBitrefill(session: SessionState, order: Order, why: string) {
+  order.status = "failed";
+  if (order.details.refunded) return;
+  credit(session, order.payAsset, order.payAmount);
+  pushActivity(session, { kind: "deposit", summary: `Refund · ${order.title}`, amount: `+${order.payAmount} ${order.payAsset}` });
+  order.details = { ...order.details, refunded: true, refundAmount: order.payAmount, error: why };
+  order.updatedAt = new Date().toISOString();
+}
+
+const UNSEEN_GIVE_UP_MS = 5 * 60_000; // blockhash long expired: an unseen payment can't land
+
+/**
+ * Poll Bitrefill until the gift card is delivered (or the budget runs out).
+ * Settles an unconfirmed ring payment first, and refunds the user when the
+ * payment never landed or Bitrefill fails / refunds the order.
+ */
+async function awaitDelivery(session: SessionState, order: Order, budgetMs: number): Promise<void> {
   const br = order.details.bitrefill as { invoiceId?: string; orderId?: string } | undefined;
-  if (!br?.orderId || order.status === "fulfilled") return;
+  if (order.status === "fulfilled" || order.status === "failed") return;
+  if (order.details.paymentStatus === "unconfirmed" || order.details.paymentStatus === "pending") {
+    const sig = order.details.paymentSignature as string | undefined;
+    const age = Date.now() - new Date((order.details.paymentAt as string | undefined) ?? order.updatedAt).getTime();
+    const outcome = sig ? await signatureOutcome(sig) : "pending";
+    if (outcome === "landed") order.details = { ...order.details, paymentStatus: "sent" };
+    else if (outcome === "failed" || age > UNSEEN_GIVE_UP_MS) {
+      refundBitrefill(session, order, "The payment didn't go through on Solana.");
+      return;
+    } else return; // still confirming
+  }
+  if (!br?.orderId) return;
   const deadline = Date.now() + budgetMs;
   while (Date.now() < deadline) {
     const { status, redemption } = await bitrefill.getRedemption(br.orderId);
@@ -699,8 +794,8 @@ async function awaitDelivery(order: Order, budgetMs: number): Promise<void> {
       return;
     }
     if (status === "failed" || status === "refunded") {
-      order.status = "failed";
       order.details = { ...order.details, bitrefillStatus: status };
+      refundBitrefill(session, order, "The merchant couldn't fulfil this order.");
       return;
     }
     await new Promise((r) => setTimeout(r, 6_000)); // Bitrefill allows 60 order reads / 10 min
@@ -801,5 +896,5 @@ export async function refreshOrder(session: SessionState, order: Order): Promise
   if (orderSettled(order)) return;
   if (order.details.zincOrderId) return settleZinc(session, order, 0);
   if (order.details.brij && order.status === "paid") return settleBrij(session, order, 0);
-  if (order.details.bitrefill && order.status === "paid") return awaitDelivery(order, 1);
+  if (order.details.bitrefill && order.status === "paid") return awaitDelivery(session, order, 1);
 }

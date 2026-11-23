@@ -259,8 +259,22 @@ function WithdrawPane() {
     try {
       const j = await post({ action: "withdraw", asset, amount: amt, to: to.trim() });
       applySlice(apply, j);
-      setMsg({ ok: true, text: `Sent ${amt} ${asset}.` });
       setAmount("");
+      let w = j.withdrawal as { id: string; status: string; error?: string } | undefined;
+      if (w?.status === "pending") {
+        // Submitted, but Solana hasn't confirmed it yet: follow it until it settles.
+        setMsg({ ok: true, text: `Submitted ${amt} ${asset}. Confirming on Solana…` });
+        for (let i = 0; i < 60 && w?.status === "pending"; i++) {
+          await new Promise((r) => setTimeout(r, 6_000));
+          const k = await post({ action: "withdrawals" }).catch(() => null);
+          if (!k) continue;
+          applySlice(apply, k);
+          w = (k.withdrawals as { id: string; status: string; error?: string }[]).find((x) => x.id === w!.id) ?? w;
+        }
+      }
+      if (w?.status === "failed") setMsg({ ok: false, text: w.error ?? "The withdrawal didn't go through. Your balance was restored." });
+      else if (w?.status === "pending") setMsg({ ok: true, text: `Submitted ${amt} ${asset}. Still confirming; your balance updates once it settles.` });
+      else setMsg({ ok: true, text: `Sent ${amt} ${asset}.` });
     } catch (e) {
       setMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -280,7 +294,7 @@ function WithdrawPane() {
           <AssetToggle value={asset} onChange={setAsset} />
         </div>
       </div>
-      <input value={to} onChange={(e) => setTo(e.target.value)} aria-label="Destination Solana address" placeholder="Destination Solana address" className="h-10 w-full rounded-xl border border-line bg-white/60 px-3 font-mono text-[11.5px] outline-none placeholder:font-sans placeholder:text-subtle focus:border-black/30" />
+      <input value={to} onChange={(e) => setTo(e.target.value)} aria-label="Destination Solana address" placeholder="Destination Solana address" className="h-10 w-full rounded-xl border border-line bg-white/60 px-3 font-mono text-[16px] sm:text-[11.5px] outline-none placeholder:font-sans placeholder:text-subtle focus:border-black/30" />
       <Button className="w-full" onClick={send} disabled={!valid || busy}>
         {busy ? <Loader2 size={15} className="animate-spin" /> : null}
         Withdraw

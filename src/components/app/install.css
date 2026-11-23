@@ -1,0 +1,14 @@
+/* Install sheet motion: slide up, backdrop fade. Transform/opacity only. */
+.sheet-up { animation: privi-sheet-up 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.sheet-backdrop { animation: privi-fade 220ms ease both; }
+@keyframes privi-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes privi-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Installed (home screen) app: no rubber-band scrolling of the whole page. */
+@media (display-mode: standalone) {
+  html, body { overscroll-behavior-y: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-up, .sheet-backdrop { animation: none; }
+}

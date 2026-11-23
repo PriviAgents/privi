@@ -4,14 +4,18 @@ Privi holds user funds, so we take reports seriously and respond quickly.
 
 ## Reporting a vulnerability
 
-**Please don't open a public issue.** Report privately through GitHub:
+**Please don't open a public issue.** Report privately, either way works:
 
-1. Go to the **Security** tab of this repository.
-2. Click **Report a vulnerability**.
+1. **Report form:** [priviagents.com/bug-bounty](https://priviagents.com/bug-bounty#report). Use this if GitHub says you've reached its limit for creating advisories.
+2. **GitHub:** the **Security** tab of this repository → **Report a vulnerability**.
 
-Include what you found, how to reproduce it, and the impact you expect. You can also reach us by DM on X at [@priviagents](https://x.com/priviagents) to ask for a contact.
+Include what you found, the code path (file and line), how to reproduce it, and the impact you expect. If neither works, DM [@priviagents](https://x.com/priviagents) on X. We never ask for keys, seed phrases or funds, and we only share a contact address through these channels.
 
-We'll acknowledge your report as quickly as we can and keep you updated until the issue is resolved. Please give us reasonable time to fix an issue before disclosing it, and never access, modify or move other users' data or funds while testing. Use demo mode or your own account.
+We'll acknowledge your report as quickly as we can and keep you updated until the issue is resolved. Please give us reasonable time to fix an issue before disclosing it, and never access, modify or move other users' data or funds while testing. Use your own account and small amounts.
+
+## Bug bounty
+
+A major security bug pays **$100 in USDC** (Round 01; more rounds are coming). One payout per unique issue: the first complete report gets it, and we decide whether an issue is major based on its real impact on users' funds, accounts or privacy. Payouts are sent once the fix ships. Full rules: [priviagents.com/bug-bounty](https://priviagents.com/bug-bounty).
 
 ## In scope
 

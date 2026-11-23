@@ -22,12 +22,17 @@ export const metadata: Metadata = {
   description:
     "Hold SOL and USDC in a Helius Privacy Ring with an encrypted balance, and let an agent book flights, hotels, and everyday purchases through chat.",
   applicationName: "Privi",
+  // Home screen app on iPhone: opens full screen, titled "Privi".
+  appleWebApp: { capable: true, title: "Privi", statusBarStyle: "default" },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: "#ffffff",
+  // Draw under the notch and home indicator; layouts pad with safe-area insets.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

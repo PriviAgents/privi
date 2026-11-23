@@ -158,13 +158,66 @@ export async function treasuryAddress(): Promise<Address> {
   return (await getTreasury()).signer.address;
 }
 
-async function submit(t: Treasury, tx: Transaction): Promise<{ signature: string; slot: bigint }> {
+/**
+ * Thrown once a ring transaction may have been broadcast but its outcome is
+ * unknown (send errored, or confirmation timed out). The payment may still
+ * land, so callers must NOT restore the user's balance: keep the operation
+ * pending and settle it later with `signatureOutcome(signature)`.
+ */
+export class RingPaymentUncertain extends Error {
+  constructor(readonly signature: string, cause: unknown) {
+    super(`Payment submitted, outcome not yet known: ${(cause as Error)?.message ?? String(cause)}`);
+    this.name = "RingPaymentUncertain";
+  }
+}
+
+// Ring operations prove (TEE), send, confirm (~50s worst case) and re-sync the
+// wallet. The lock must outlive the longest function (maxDuration 120s).
+const RING_LOCK_TTL = 150;
+
+async function submit(t: Treasury, tx: Transaction, onSigned?: (signature: string) => Promise<void>): Promise<{ signature: string; slot: bigint }> {
   const signed = await signTransactionWithSigners([t.signer], tx);
-  const send = sendTransactionWithoutConfirmingFactory({ rpc: t.client.solanaRpc });
-  await send(signed as Parameters<typeof send>[0], { commitment: "confirmed" });
   const signature = getSignatureFromTransaction(signed);
-  const slot = await t.client.confirmTransaction(signature);
+  // Let the caller record the signature before anything is broadcast, so a
+  // crash after this point can always be reconciled on-chain.
+  if (onSigned) await onSigned(signature);
+  const send = sendTransactionWithoutConfirmingFactory({ rpc: t.client.solanaRpc });
+  let slot: bigint;
+  try {
+    await send(signed as Parameters<typeof send>[0], { commitment: "confirmed" });
+    slot = await t.client.confirmTransaction(signature);
+  } catch (e) {
+    // A failed send can still have reached a validator; a confirmation timeout
+    // says nothing about whether it landed.
+    throw new RingPaymentUncertain(signature, e);
+  }
   return { signature, slot };
+}
+
+/**
+ * Settled outcome of a ring transaction we sent: "landed" (confirmed, no
+ * error), "failed" (confirmed with an error, nothing moved), or "pending"
+ * (not seen yet). A signature still unseen well after its blockhash expired
+ * (~90s) never landed; callers decide that cutoff.
+ */
+export async function signatureOutcome(signature: string): Promise<"landed" | "failed" | "pending"> {
+  const t = await getTreasury();
+  const { value } = await t.client.solanaRpc
+    .getSignatureStatuses([signature as Parameters<typeof t.client.solanaRpc.getSignatureStatuses>[0][number]], { searchTransactionHistory: true })
+    .send();
+  const st = value[0];
+  // Only trust a confirmed/finalized status: a processed one can still be on a dropped fork.
+  if (!st || (st.confirmationStatus !== "confirmed" && st.confirmationStatus !== "finalized")) return "pending";
+  return st.err ? "failed" : "landed";
+}
+
+/** Re-sync after a landed transaction. The payment already happened, so a sync error is logged, not thrown. */
+async function syncAfter(t: Treasury, slot: bigint): Promise<void> {
+  try {
+    await syncedWallet(t, slot);
+  } catch (e) {
+    console.error("[privi] ring wallet sync after landed tx failed (next operation re-syncs):", (e as Error).message);
+  }
 }
 
 /** Load the persisted wallet and sync it (optionally past a landed slot). */
@@ -230,9 +283,9 @@ export async function depositToRing(asset: RingAsset, amount: number): Promise<{
       amount: base,
     });
     const { signature, slot } = await submit(t, tx);
-    await syncedWallet(t, slot); // record the new UTXO before the next spend
+    await syncAfter(t, slot); // record the new UTXO before the next spend
     return { signature };
-  });
+  }, RING_LOCK_TTL);
 }
 
 /**
@@ -273,7 +326,10 @@ export async function sweepToRing(): Promise<{ deposited: Partial<Record<RingAss
  * The recipient and amount become public for this one payment; the rest of the
  * balance and its history stay encrypted.
  */
-export async function payFromRing(input: { to: string; asset: RingAsset; amount: number }): Promise<{ signature: string }> {
+export async function payFromRing(
+  input: { to: string; asset: RingAsset; amount: number },
+  onSigned?: (signature: string) => Promise<void>,
+): Promise<{ signature: string }> {
   const t = await getTreasury();
   return withLock(`ring:${t.signer.address}`, async () => {
     const wallet = await syncedWallet(t);
@@ -286,10 +342,10 @@ export async function payFromRing(input: { to: string; asset: RingAsset; amount:
       ...(input.asset === "USDC" ? { asset: mintOf("USDC") } : {}),
       amount: toBase(input.asset, input.amount),
     });
-    const { signature, slot } = await submit(t, tx);
-    await syncedWallet(t, slot);
+    const { signature, slot } = await submit(t, tx, onSigned);
+    await syncAfter(t, slot);
     return { signature };
-  });
+  }, RING_LOCK_TTL);
 }
 
 export const ringsNetwork = () => NETWORK;
@@ -301,7 +357,7 @@ export const base58 = { encode: (b: Uint8Array) => getBase58Decoder().decode(b) 
 /** Publish the treasury's shielded keys (idempotent). Needed once per treasury. */
 export async function registerTreasury(): Promise<{ address: string }> {
   const t = await getTreasury();
-  await withLock(`ring:${t.signer.address}`, () => ensureRegistered(t));
+  await withLock(`ring:${t.signer.address}`, () => ensureRegistered(t), RING_LOCK_TTL);
   return { address: t.signer.address };
 }
 

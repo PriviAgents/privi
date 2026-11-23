@@ -35,7 +35,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
   if (!stored) return Response.json({ error: "Order not found." }, { status: 404, headers });
   if (!rl.ok || orderSettled(stored)) return Response.json({ order: view(stored) }, { headers });
 
-  const unlock = await lockSession(initial.id, 30, 0);
+  const unlock = await lockSession(initial.id, 45, 0); // outlives the 30s function
   if (!unlock) return Response.json({ order: view(stored), stale: true }, { headers });
   try {
     const session = await loadSession(initial.id);

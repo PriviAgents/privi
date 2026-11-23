@@ -29,7 +29,7 @@ import type { Asset, Deposit, SessionState, Withdrawal } from "./types";
 import { kv } from "./kv";
 import { liveMode, newId, pushActivity } from "./store";
 import { credit, debit, totalUsd } from "./wallet";
-import { explorerTx, payFromRing, solanaRpc, sweepToRing, toBase, treasuryAddress, usdcMint } from "./rings";
+import { explorerTx, payFromRing, RingPaymentUncertain, signatureOutcome, solanaRpc, sweepToRing, toBase, treasuryAddress, usdcMint } from "./rings";
 
 /**
  * Funding the private balance.
@@ -42,6 +42,7 @@ import { explorerTx, payFromRing, solanaRpc, sweepToRing, toBase, treasuryAddres
  */
 
 const DEPOSIT_TTL_MS = 30 * 60_000;
+const MAX_OPEN_DEPOSITS = 3;
 const MIN: Record<Asset, number> = { SOL: 0.01, USDC: 1 };
 const amountKey = (asset: Asset, amount: number) => `dep:amt:${asset}:${toBase(asset, amount)}`;
 
@@ -71,17 +72,29 @@ export async function createDeposit(s: SessionState, asset: Asset, amount: numbe
   if (Number.isFinite(cap) && cap > 0 && totalUsd(s) + amount * (s.wallet.prices[asset] ?? 0) > cap) {
     throw new Error(`A balance can hold up to $${cap.toLocaleString("en-US")}.`);
   }
+  // Open requests reserve amounts (below), so cap how many one account holds.
+  const open = s.deposits.filter((d) => d.status === "PENDING" && Date.now() < new Date(d.expiresAt).getTime());
+  if (open.length >= MAX_OPEN_DEPOSITS) throw new Error("You have open deposit requests already. Finish or cancel one first.");
   const recipient = await treasuryAddress();
   const reference = newReference();
   const id = newId("dep");
   // Each open deposit asks for a distinct amount, so a transfer that arrives
   // without its reference (copied address, wallet that drops it) can still be
-  // matched by exact amount. Collisions get nudged by a hair.
+  // matched by exact amount. Every request gets a small random tail (under a
+  // cent of USDC, under 0.001 SOL), so round amounts are never reserved: nobody can
+  // squat "10 USDC" and catch someone else's plain transfer.
   const step = asset === "SOL" ? 0.00001 : 0.0001;
+  const r = crypto.getRandomValues(new Uint32Array(1))[0];
+  amount = Math.round((amount + step * (1 + (r % 99))) * 1e9) / 1e9;
+  let reserved = false;
   for (let i = 0; i < 50; i++) {
-    if (await kv.setNx(amountKey(asset, amount), id, DEPOSIT_TTL_MS / 1000 + 600)) break;
+    if (await kv.setNx(amountKey(asset, amount), id, DEPOSIT_TTL_MS / 1000 + 600)) {
+      reserved = true;
+      break;
+    }
     amount = Math.round((amount + step) * 1e9) / 1e9;
   }
+  if (!reserved) throw new Error("Couldn't open a deposit right now. Try a slightly different amount.");
   const now = Date.now();
   const paymentUri = transferRequestUri({ recipient, asset, amount, reference });
   const d: Deposit = {
@@ -321,8 +334,21 @@ export async function checkDeposit(s: SessionState, id: string, opts: { force?: 
   return d;
 }
 
-/** Pay out of the user's private balance to any Solana address. */
-export async function withdraw(s: SessionState, input: { asset: Asset; amount: number; to: string }): Promise<Withdrawal> {
+/**
+ * Pay out of the user's private balance to any Solana address.
+ *
+ * Write-ahead: the debit and a `pending` withdrawal are saved (via `persist`)
+ * before anything is signed, and the signature is saved before it is sent. So
+ * a second request, an expired lock or a killed function can never see the
+ * pre-debit balance, and every broadcast payment can be found on-chain. The
+ * balance is restored only when the payment definitely didn't happen: it
+ * failed before signing, or its transaction never landed / failed on-chain.
+ */
+export async function withdraw(
+  s: SessionState,
+  input: { asset: Asset; amount: number; to: string },
+  persist: () => Promise<void>,
+): Promise<Withdrawal> {
   if (!liveMode()) throw new Error("Withdrawals need Privacy Rings configured on the server.");
   let to: Address;
   try {
@@ -331,18 +357,69 @@ export async function withdraw(s: SessionState, input: { asset: Asset; amount: n
     throw new Error("That is not a valid Solana address.");
   }
   debit(s, input.asset, input.amount); // throws on insufficient balance
-  const w: Withdrawal = { id: newId("wd"), asset: input.asset, amount: input.amount, to, status: "sent", at: new Date().toISOString() };
+  const w: Withdrawal = { id: newId("wd"), asset: input.asset, amount: input.amount, to, status: "pending", at: new Date().toISOString() };
+  s.withdrawals.unshift(w);
+  await persist();
   try {
-    const { signature } = await payFromRing({ to, asset: input.asset, amount: input.amount });
+    const { signature } = await payFromRing({ to, asset: input.asset, amount: input.amount }, async (sig) => {
+      w.signature = sig;
+      await persist();
+    });
     w.signature = signature;
+    w.status = "sent";
     pushActivity(s, { kind: "withdraw", summary: `Withdrew to ${to.slice(0, 4)}…${to.slice(-4)}`, amount: `−${input.amount} ${input.asset}` });
   } catch (e) {
-    credit(s, input.asset, input.amount); // nothing left the ring: restore
-    w.status = "failed";
-    w.error = (e as Error).message;
+    if (e instanceof RingPaymentUncertain) {
+      // May still land: keep the debit, settle later from the signature.
+      w.signature = e.signature;
+      w.error = undefined;
+    } else if (!w.signature) {
+      // Failed before a transaction existed: nothing left the ring.
+      credit(s, input.asset, input.amount);
+      w.status = "failed";
+      w.error = (e as Error).message;
+    }
+    // Signed but the error came from elsewhere: stays pending for reconcile.
   }
-  s.withdrawals.unshift(w);
   return w;
+}
+
+// A blockhash is valid for ~150 slots (~60-90s). Past this, an unseen
+// signature can no longer land.
+const UNSEEN_GIVE_UP_MS = 5 * 60_000;
+
+/**
+ * Settle pending withdrawals from the chain. Landed → sent. Failed on-chain,
+ * or never seen long after its blockhash expired, or never signed → refunded
+ * exactly once. Returns true when anything changed.
+ */
+export async function reconcileWithdrawals(s: SessionState): Promise<boolean> {
+  let changed = false;
+  for (const w of s.withdrawals) {
+    if (w.status !== "pending") continue;
+    const age = Date.now() - new Date(w.at).getTime();
+    let outcome: "landed" | "failed" | "pending";
+    if (!w.signature) outcome = age > UNSEEN_GIVE_UP_MS ? "failed" : "pending";
+    else {
+      try {
+        outcome = await signatureOutcome(w.signature);
+      } catch {
+        continue; // RPC hiccup: try again next time
+      }
+      if (outcome === "pending" && age > UNSEEN_GIVE_UP_MS) outcome = "failed";
+    }
+    if (outcome === "landed") {
+      w.status = "sent";
+      pushActivity(s, { kind: "withdraw", summary: `Withdrew to ${w.to.slice(0, 4)}…${w.to.slice(-4)}`, amount: `−${w.amount} ${w.asset}` });
+      changed = true;
+    } else if (outcome === "failed") {
+      credit(s, w.asset, w.amount);
+      w.status = "failed";
+      w.error = "The withdrawal didn't go through on Solana. Your balance was restored.";
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 export { explorerTx };

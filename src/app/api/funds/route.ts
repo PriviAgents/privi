@@ -5,7 +5,7 @@ import { currentSession, lockSession, requireSignedIn, saveSession, sessionCooki
 import { loadSession } from "@/lib/privi/store";
 import { rateLimit } from "@/lib/privi/kv";
 import { checkDeposit, createDeposit,
-  depositTransaction, cancelDeposit, submitDepositTransaction, withdraw } from "@/lib/privi/funds";
+  depositTransaction, cancelDeposit, reconcileWithdrawals, submitDepositTransaction, withdraw } from "@/lib/privi/funds";
 import { DEMO_FAUCET, liveMode } from "@/lib/privi/store";
 import { demoFund } from "@/lib/privi/wallet";
 import type { SessionState } from "@/lib/privi/types";
@@ -23,6 +23,7 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("deposit-tx"), depositId: z.string(), payer: z.string().min(32).max(44) }),
   z.object({ action: z.literal("withdraw"), asset: Asset, amount: z.number().positive(), to: z.string().min(32).max(44) }),
   z.object({ action: z.literal("faucet"), asset: Asset }),
+  z.object({ action: z.literal("withdrawals") }),
 ]);
 
 function slice(s: SessionState) {
@@ -52,14 +53,21 @@ export async function POST(req: Request) {
   // the next poll checks again.
   let unlock: (() => Promise<void>) | null = null;
   if (b.action !== "deposit-tx" && b.action !== "deposit-submit") {
-    unlock = await lockSession(initial.id, 60, b.action === "status" ? 0 : 8_000);
+    // The lock must outlive the function (maxDuration 120s): a withdrawal can
+    // prove, confirm and re-sync for most of that.
+    unlock = await lockSession(initial.id, 150, b.action === "status" || b.action === "withdrawals" ? 0 : 8_000);
     if (!unlock) {
       if (b.action === "status") return Response.json({ deposit: initial.deposits.find((d) => d.id === b.depositId), ...slice(initial) }, { headers });
+      if (b.action === "withdrawals") return Response.json(slice(initial), { headers });
       return Response.json({ error: "Still finishing your last request. Try again in a moment." }, { status: 409, headers });
     }
     session = await loadSession(initial.id);
   }
   try {
+    // Settle any withdrawal whose on-chain outcome wasn't known yet.
+    if (unlock && session.withdrawals.some((w) => w.status === "pending")) {
+      if (await reconcileWithdrawals(session)) await saveSession(session);
+    }
     switch (b.action) {
       case "deposit": {
         const deposit = await createDeposit(session, b.asset, b.amount);
@@ -83,10 +91,14 @@ export async function POST(req: Request) {
       case "withdraw": {
         const wl = await rateLimit(`withdraw:${session.id}`, 5, 3600);
         if (!wl.ok) return Response.json({ error: "Withdrawal limit reached. Try again later." }, { status: 429, headers });
-        const withdrawal = await withdraw(session, b);
-        await saveSession(session);
-        if (withdrawal.status === "failed") return Response.json({ error: withdrawal.error, withdrawal, ...slice(session) }, { status: 502, headers });
-        return Response.json({ withdrawal, ...slice(session) }, { headers });
+        const s = session;
+        const withdrawal = await withdraw(s, b, () => saveSession(s));
+        await saveSession(s);
+        if (withdrawal.status === "failed") return Response.json({ error: withdrawal.error, withdrawal, ...slice(s) }, { status: 502, headers });
+        return Response.json({ withdrawal, ...slice(s) }, { status: withdrawal.status === "pending" ? 202 : 200, headers });
+      }
+      case "withdrawals": {
+        return Response.json(slice(session), { headers });
       }
       case "faucet": {
         if (liveMode()) return Response.json({ error: "The demo faucet is disabled in live mode." }, { status: 400, headers });

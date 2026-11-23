@@ -89,7 +89,8 @@ export interface Withdrawal {
   asset: Asset;
   amount: number;
   to: string;
-  status: "sent" | "failed";
+  /** pending: debited, payment submitted or in flight; settled by reconcileWithdrawals. */
+  status: "pending" | "sent" | "failed";
   signature?: string;
   error?: string;
   at: string;

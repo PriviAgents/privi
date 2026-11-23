@@ -28,7 +28,7 @@ export function Activity() {
   const done = state.orders.filter((o) => o.status !== "awaiting_confirmation" && o.status !== "cancelled").slice(0, 6);
 
   return (
-    <GlassCard className="flex max-h-[calc(100dvh-5.5rem)] flex-col p-5 lg:sticky lg:top-[4.25rem]">
+    <GlassCard className="flex flex-col p-5 lg:sticky lg:top-[4.25rem] lg:max-h-[calc(100dvh-5.5rem)]">
       <Kicker>Orders</Kicker>
       <div className="mt-3 space-y-2">
         {open.length === 0 && done.length === 0 && <p className="text-[13px] text-subtle">Nothing yet. Ask the agent to find something.</p>}

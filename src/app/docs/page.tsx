@@ -14,6 +14,7 @@ export const metadata: Metadata = {
 const SECTIONS = [
   { id: "overview", label: "Overview" },
   { id: "quickstart", label: "Quickstart" },
+  { id: "install", label: "Install on your phone" },
   { id: "accounts", label: "Accounts & passkeys" },
   { id: "deposits", label: "Deposits" },
   { id: "balance", label: "Your private balance" },
@@ -98,6 +99,27 @@ export default function DocsPage() {
               <li>Pick from the options, review the exact price, and approve.</li>
               <li>Follow everything on its order page: shipping and tracking, or your airline or hotel confirmation.</li>
             </ol>
+          </Section>
+
+          <Section id="install" title="Install on your phone">
+            <p>
+              Privi runs full screen from your home screen, like an app. No app store needed. In the app, tap <strong>Get the app</strong>,
+              or:
+            </p>
+            <ul>
+              <li>
+                <strong>iPhone and iPad:</strong> open priviagents.com/app in Safari, tap <strong>Share</strong>, then{" "}
+                <strong>Add to Home Screen</strong>.
+              </li>
+              <li>
+                <strong>Android:</strong> open it in Chrome, tap the <strong>⋮</strong> menu, then <strong>Install app</strong> (or{" "}
+                <strong>Add to Home screen</strong>).
+              </li>
+            </ul>
+            <Note>
+              On iPhone, the home screen app keeps its own sign-in, separate from Safari. Sign in once with your passkey inside the app; your
+              balance and orders are the same.
+            </Note>
           </Section>
 
           <Section id="accounts" title="Accounts & passkeys">
@@ -340,6 +362,11 @@ export default function DocsPage() {
               that applied to Privi was fixed or mitigated the same day. The full report, every finding and how each was resolved are
               published on the <Link href="/security-audit">security audit page</Link>, with the report also available as{" "}
               <a href="/security/zauth-vector-report-2026-11-22.pdf">PDF</a> and <a href="/security/zauth-vector-report-2026-11-22.md">Markdown</a>.
+            </p>
+            <h3 id="bug-bounty" className="mt-8 scroll-mt-28 text-[17px] font-semibold tracking-tight text-foreground">Bug bounty</h3>
+            <p className="mt-2">
+              Found a security bug? Report it privately on the <Link href="/bug-bounty">bug bounty page</Link>. A major bug pays $100 in USDC.
+              Please don&apos;t post security issues publicly.
             </p>
           </Section>
 

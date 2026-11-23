@@ -5,6 +5,7 @@ import { deleteTranscript, loadSession } from "@/lib/privi/store";
 import { acquireChatSlot, recordSpend, spendGate, usageMicros } from "@/lib/privi/limits";
 import { bump, serverError } from "@/lib/privi/telemetry";
 import { runAgentTurn, type AgentEvent } from "@/lib/agent/run";
+import { reconcileWithdrawals } from "@/lib/privi/funds";
 
 export const maxDuration = 120;
 
@@ -50,6 +51,10 @@ export async function POST(req: Request) {
   }
   // Fresh copy inside the lock: nothing else can change this account until we release it.
   const session = await loadSession(initial.id);
+  // Settle any withdrawal whose on-chain outcome wasn't known yet (best effort).
+  if (session.withdrawals.some((w) => w.status === "pending")) {
+    await reconcileWithdrawals(session).catch(() => false);
+  }
   let micros = 0;
   await bump("chats");
   const encoder = new TextEncoder();
