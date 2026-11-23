@@ -46,6 +46,8 @@ const kOwner = (sid: string) => `sessowner:${sid}`;
 // passkey prompt is open. Each challenge is accepted once, then deleted.
 const kChal = (sid: string, kind: "reg" | "auth", challenge: string) => `chal:${kind}:${sid}:${challenge}`;
 const CHALLENGE_TTL = 300;
+/** How long the browser's passkey prompt stays open (the default 60s is too short on phones). */
+const CEREMONY_TIMEOUT_MS = 180_000;
 
 /** Claim an outstanding challenge for this session (single use). */
 async function claim<T>(sid: string, kind: "reg" | "auth", challenge: string): Promise<T | null> {
@@ -104,6 +106,7 @@ export async function registrationOptions(sessionId: string, rp: { rpID: string 
   const options = await generateRegistrationOptions({
     rpName: "Privi",
     rpID: rp.rpID,
+    timeout: CEREMONY_TIMEOUT_MS,
     userName: `privi-${userId.slice(-6)}`,
     userDisplayName: "Privi account",
     userID: new TextEncoder().encode(userId),
@@ -163,7 +166,7 @@ export async function verifyRegistration(
 
 export async function authenticationOptions(sessionId: string, rp: { rpID: string }) {
   // Discoverable credentials: the device offers whichever Privi passkey it holds.
-  const options = await generateAuthenticationOptions({ rpID: rp.rpID, userVerification: "preferred" });
+  const options = await generateAuthenticationOptions({ rpID: rp.rpID, userVerification: "preferred", timeout: CEREMONY_TIMEOUT_MS });
   await kv.set(kChal(sessionId, "auth", options.challenge), { at: Date.now() }, CHALLENGE_TTL);
   return options;
 }
