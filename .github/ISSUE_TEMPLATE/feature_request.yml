@@ -1,0 +1,22 @@
+name: Feature request
+description: Suggest a new merchant, agent ability or improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What should Privi do?
+      description: The problem or use case, in a sentence or two.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work
+      description: Merchants, APIs or UI you have in mind.
+  - type: checkboxes
+    id: build
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to build this myself

@@ -1,0 +1,45 @@
+{
+  "name": "privi",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
+    "@heliuslabs/spr": "^0.9.0-alpha",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.1.0",
+    "@solana-program/compute-budget": "^0.18.1",
+    "@solana-program/system": "^0.14.1",
+    "@solana-program/token": "^0.18.0",
+    "@solana/kit": "^8.6.0",
+    "@upstash/redis": "^1.39.0",
+    "@vercel/analytics": "^2.0.1",
+    "@wallet-standard/app": "^1.1.1",
+    "@x402/core": "^2.32.0",
+    "@x402/fetch": "^2.32.0",
+    "@x402/svm": "^2.32.0",
+    "lucide-react": "^1.57.0",
+    "next": "^16.4.6",
+    "qrcode": "^1.5.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "simple-icons": "^16.35.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "^16.4.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

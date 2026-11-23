@@ -1,0 +1,28 @@
+/* Tokenomics page: copy checkmark and donut draw-in. Transform/opacity/stroke only. */
+
+.check-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: tk-check 320ms 60ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+@keyframes tk-check {
+  to { stroke-dashoffset: 0; }
+}
+
+.donut-seg {
+  animation: tk-seg 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transition: stroke-width 200ms ease, opacity 200ms ease;
+}
+@keyframes tk-seg {
+  from { stroke-dasharray: 0 1000; }
+}
+.donut:has(.split-row:hover) .donut-seg { opacity: 0.25; }
+.donut:has(.split-row[data-k="burn"]:hover) .donut-seg[data-k="burn"],
+.donut:has(.split-row[data-k="lp"]:hover) .donut-seg[data-k="lp"],
+.donut:has(.split-row[data-k="airdrop"]:hover) .donut-seg[data-k="airdrop"],
+.donut:has(.split-row[data-k="ops"]:hover) .donut-seg[data-k="ops"] { opacity: 1; stroke-width: 26; }
+
+@media (prefers-reduced-motion: reduce) {
+  .check-draw { animation: none; stroke-dashoffset: 0; }
+  .donut-seg { animation: none; }
+}
